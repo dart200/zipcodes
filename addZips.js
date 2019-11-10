@@ -6,28 +6,22 @@ let debug = false;    // sets debug printout instead of pushing to database
 let verbose = false;  // doesn't do anything, just here to see how clean i can make a flag interface
 
 const opts = [
-  [['-d', '--debug'], () => debug = true],
-  ['-v', () => verbose = true],
-].map(
-  ([opt, effect]) => ({opt: typeof opt == 'string' ? [opt] : opt, effect})
-);
+  [() => debug = true, '-d', '--debug'],
+  [() => verbose = true, '-v'],
+].map(([effect, ...flags]) => ({ effect, flags }));
 
 for (arg of args) {
   if (!/-{1,2}[\S]*/.test(arg)) continue;
 
-  const found = opts.reduce(
-    (f, {opt, effect}) => {
-      if (opt.includes(arg)) {
-        effect();
-        return true;
-      } else {
-        return f;
-      }
-    },
-    false);
+  const found = opts.find(
+    ({effect, flags}) => flags.includes(arg)
+  );
   
   if (!found) {
     console.error(`unknown flag: ${arg}`);
+    process.exit();
+  } else {
+    found.effect();
   }
 };
 
