@@ -9,6 +9,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "command-line-args": "^5.1.1",
     "firebase-admin": "^8.1.0",
     "line-reader": "^0.4.0"
   }

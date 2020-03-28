@@ -1,90 +1,82 @@
 #!/usr/bin/env node
-
-const [,, ...args] = process.argv;
-
-let debug = false;    // sets debug printout instead of pushing to database
-let verbose = false;  // doesn't do anything, just here to see how clean i can make a flag interface
-
-const opts = [
-  [() => debug = true, '-d', '--debug'],
-  [() => verbose = true, '-v'],
-].map(([effect, ...flags]) => ({ effect, flags }));
-
-for (arg of args) {
-  if (!/-{1,2}[\S]*/.test(arg)) continue;
-
-  const found = opts.find(
-    ({effect, flags}) => flags.includes(arg)
-  );
-  
-  if (!found) {
-    console.error(`unknown flag: ${arg}`);
-    process.exit();
-  } else {
-    found.effect();
-  }
-};
-
 const fs = require('fs');
+const commandLineArgs = require('command-line-args');
 const lineReader = require('line-reader');
+
+const errorOut = (errMsg) => {
+  console.error(errMsg);
+  process.exit(1);
+}
+
+// process command lines args
+const optionDefinitions = [
+  {name: 'live', type: Boolean},
+  {name: 'positionals', defaultOption: true, multiple: true},
+];
+const {live, positionals} = commandLineArgs(optionDefinitions);
+
+if (!positionals) 
+  errorOut('need selector of syntax: <county|state>=<value>');
+
+let selectCounty = null;
+let selectState = null;
+for (const arg of positionals) {
+  const matches = arg.match(/(county|state)=(\w+)/)
+  if (!matches) errorOut('selectors must be of syntax: <county|state>=<value>');
+  const [match, select, value] = matches;
+  if (select === 'county') selectCounty = value.toUpperCase();
+  if (select === 'state') {
+    if (value.length !== 2) errorOut('state must be two letter code');
+    selectState = value.toUpperCase().replace(' ', '');
+  }
+}
+
+if (!selectCounty && !selectState) {
+  errorOut('no selectors set?');
+}
 
 // initialize firebase/firestore
 var admin = require('firebase-admin');
 const serviceAccount = require("./muva-backend-key.json");
-const app = admin.initializeApp({
+admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
   databaseURL: "https://muva-backend.firebaseio.com"
 });
 const db = admin.firestore();
 
-const geopoints = [];
-
-const readGeoPoints = (filename) => new Promise((resolve) =>
-  lineReader.eachLine(filename, (line) => {
-    const [zipCode, city, state, latitude, longitude, timezone, daylightSavingsFlag, geopoint] 
-      = line.split(';');
-    
-    if (zipCode !== 'Zip')
-      geopoints[zipCode] = geopoint;
-  }, () => {
-    console.log(`geopoints read`);
-    resolve();
-  })
-);
-
 let total = 0;
+const promises = [];
+const readZipCodes = () => new Promise((resolve) =>
+  lineReader.eachLine('./db/db.csv', async (line) => {
+    const [zipCode, county, state, geopoint, timezone] = line.split(';');
 
-const readZipCodes = (filename) => new Promise((resolve) =>
-  lineReader.eachLine(filename, (line) => {
-    const [x, type, ...tRest] = line.split('\t');
-    const [n0, n1, zipCode] = x.split(' ')
-    
-    total = total + 1;
-    const geopoint = geopoints[zipCode];
+    if (selectState && state !== selectState) return;
+    if (selectCounty && county.replace(/ /g, '') !== selectCounty) return;
 
-    if (debug) {
-      if (!geopoint){
-        console.log(`geopoint not found: ${zipCode} ${type}`);
-      } else { 
-        console.log({ zipCode, type: type[0], geopoint });
-      }
-    } else {
-      db.doc(`validZipCodes/${zipCode}`).set({
-        type,
-        geopoint: geopoint || '',
+    if (live) {
+      const p = db.doc(`validZipCodes/${zipCode}`).set({
+        geopoint: geopoint,
+        timezone,
+        county,
+        state,
       });
+      promises.push(p);
+    } else { 
+      console.log(`${zipCode}; ${county}; ${state}; ${geopoint}; ${timezone}`);
     }
-
-  }, () => {
-    if (!debug) console.log('zip codes written');
+    total = total+1;
+  }, async () => {
     console.log(`total: ${total}`);
+    if (live) {
+      await Promise.all(promises);
+      console.log('zip codes written');
+    }
     resolve();
   })
 );
 
 const run = async () => {
-  await readGeoPoints('./ca-geopoints.csv');
-  await readZipCodes('./counties/santa-barbara');
+  await readZipCodes();
 };
 
 run();
